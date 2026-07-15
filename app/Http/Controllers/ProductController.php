@@ -2,123 +2,162 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Product;
+use Illuminate\Routing\Attributes\Middleware;
+use App\Http\Requests\StoreProductRequest;
+use App\Http\Requests\UpdateProductRequest;
+use App\Models\AuditLog;
 use App\Models\Category;
+use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Services\ProductService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class ProductController extends Controller
 {
+    #[Middleware(['auth', 'role:admin,cashier'])]
+    public function __construct(
+        protected ProductService $productService
+    ) {}
+
     public function index()
     {
-        $products = Product::with('category', 'variants')->latest()->paginate(20);
+        $this->authorize('viewAny', Product::class);
+        $page = request('page', 1);
+        $products = Cache::tags(['products'])->remember("products_page_{$page}", 300, function () {
+            return Product::with('category:id,name', 'variants:id,product_id,name,price,is_active')
+                ->select('id', 'name', 'image', 'image_thumbnail', 'category_id', 'is_active', 'created_at')
+                ->latest()
+                ->paginate(20);
+        });
+
         return inertia('Products/Index', compact('products'));
     }
 
     public function create()
     {
+        $this->authorize('create', Product::class);
         $categories = Category::where('is_active', true)->get();
+
         return inertia('Products/Create', compact('categories'));
     }
 
-    public function store(Request $request)
+    public function store(StoreProductRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'category_id' => 'required|exists:categories,id',
-            'is_active' => 'boolean',
-            'image' => 'nullable|image|max:2048',
-            'variants' => 'nullable|array',
-            'variants.*.name' => 'required_with:variants|string|max:255',
-            'variants.*.price' => 'required_with:variants|numeric|min:0',
-        ]);
+        $this->authorize('create', Product::class);
+        $validated = $request->validated();
 
-        if ($request->hasFile('image')) {
-            $validated['image'] = $request->file('image')->store('products', 'public');
-        }
-
+        $validated['slug'] = Str::slug($validated['name']);
+        $validated['image'] = $this->productService->handleImageUpload($request->file('image'));
+        $validated['image_thumbnail'] = $this->productService->generateThumbnail($validated['image']);
         $validated['is_active'] = $request->boolean('is_active');
         $product = Product::create($validated);
 
-        if ($request->variants) {
-            foreach ($request->variants as $variant) {
-                $product->variants()->create($variant);
-            }
+        $variants = $request->input('variants', []);
+        if (is_string($variants)) {
+            $variants = json_decode($variants, true) ?? [];
         }
 
-        Cache::forget('pos_categories');
+        foreach ($variants as $i => $variant) {
+            $variantImage = $request->file("variant_images.{$i}");
+            if ($variantImage) {
+                $variant['image'] = $variantImage->store('variants', 'public');
+            }
+            $product->variants()->create($variant);
+        }
+
+        AuditLog::log('product_created', 'Product', $product->id, null, $product->load('variants')->toArray());
+
+        $this->productService->invalidateCache();
+        Cache::tags(['products'])->flush();
+
         return redirect()->route('products.index')->with('success', 'Producto creado');
     }
 
     public function show(Product $product)
     {
+        $this->authorize('view', $product);
         return redirect()->route('products.edit', $product);
     }
 
     public function edit(Product $product)
     {
+        $this->authorize('update', $product);
         $categories = Category::where('is_active', true)->get();
         $product->load('variants');
+
         return inertia('Products/Edit', compact('product', 'categories'));
     }
 
-    public function update(Request $request, Product $product)
+    public function update(UpdateProductRequest $request, Product $product)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'category_id' => 'required|exists:categories,id',
-            'is_active' => 'boolean',
-            'image' => 'nullable|image|max:2048',
-            'remove_image' => 'nullable|boolean',
-            'variants' => 'nullable|array',
-            'variants.*.id' => 'nullable|exists:product_variants,id',
-            'variants.*.name' => 'required_with:variants|string|max:255',
-            'variants.*.price' => 'required_with:variants|numeric|min:0',
-        ]);
+        $this->authorize('update', $product);
+        $validated = $request->validated();
 
-        if ($request->hasFile('image')) {
-            if ($product->image) Storage::disk('public')->delete($product->image);
-            $validated['image'] = $request->file('image')->store('products', 'public');
-        } elseif ($request->boolean('remove_image') && $product->image) {
-            Storage::disk('public')->delete($product->image);
-            $validated['image'] = null;
+        $hasNewImage = $request->hasFile('image');
+        $validated['image'] = $this->productService->handleImageUpload(
+            $request->file('image'),
+            $product->image
+        );
+
+        if ($hasNewImage && $validated['image'] && $product->image !== $validated['image']) {
+            $this->productService->deleteProductImage($product->image_thumbnail);
+            $validated['image_thumbnail'] = $this->productService->generateThumbnail($validated['image']);
         }
 
+        if (! $hasNewImage) {
+            $oldImage = $validated['image'] ?? $product->image;
+            $wasRemoved = $request->boolean('remove_image') && $oldImage;
+            if ($wasRemoved) {
+                $this->productService->deleteProductImage($product->image_thumbnail);
+                $validated['image_thumbnail'] = null;
+            }
+            $validated['image'] = $this->productService->handleImageRemoval(
+                $request->boolean('remove_image'),
+                $oldImage
+            );
+        }
+
+        $validated['slug'] = Str::slug($validated['name']);
         $validated['is_active'] = $request->boolean('is_active');
+        $old = $product->toArray();
         $product->update($validated);
 
-        if ($request->variants) {
-            $existingIds = collect($request->variants)->pluck('id')->filter();
-            $product->variants()->whereNotIn('id', $existingIds)->delete();
-            
-            foreach ($request->variants as $variant) {
-                if (isset($variant['id'])) {
-                    $product->variants()->where('id', $variant['id'])->update(collect($variant)->except('id')->toArray());
-                } else {
-                    $product->variants()->create($variant);
-                }
-            }
+        $variants = $request->input('variants', []);
+        if (is_string($variants)) {
+            $variants = json_decode($variants, true) ?? [];
         }
 
-        Cache::forget('pos_categories');
+        $this->productService->syncVariants($product, $variants, $request);
+
+        AuditLog::log('product_updated', 'Product', $product->id, $old, $product->fresh()->load('variants')->toArray());
+
+        Cache::tags(['products'])->flush();
+
         return redirect()->route('products.index')->with('success', 'Producto actualizado');
     }
 
     public function destroy(Product $product)
     {
-        if ($product->image) Storage::disk('public')->delete($product->image);
+        $this->authorize('delete', $product);
+        $old = $product->load('variants')->toArray();
+        $this->productService->deleteProductImage($product->image);
+        $this->productService->deleteProductImage($product->image_thumbnail);
         $product->variants()->delete();
         $product->delete();
-        Cache::forget('pos_categories');
+
+        AuditLog::log('product_deleted', 'Product', $product->id, $old);
+
+        $this->productService->invalidateCache();
+        Cache::tags(['products'])->flush();
+
         return redirect()->route('products.index')->with('success', 'Producto eliminado');
     }
 
     public function stockIndex()
     {
+        $this->authorize('viewAny', Product::class);
         $variants = ProductVariant::with('product.category')
             ->whereNotNull('stock')
             ->orderBy('stock')
@@ -139,6 +178,7 @@ class ProductController extends Controller
 
     public function stockUpdate(Request $request)
     {
+        $this->authorize('create', Product::class);
         $validated = $request->validate([
             'updates' => 'required|array',
             'updates.*.id' => 'required|exists:product_variants,id',
@@ -150,7 +190,8 @@ class ProductController extends Controller
             $variant->update(['stock' => $update['stock']]);
         }
 
-        Cache::forget('pos_categories');
+        $this->productService->invalidateCache();
+
         return redirect()->back()->with('success', 'Stock actualizado masivamente');
     }
 }

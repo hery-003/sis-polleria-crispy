@@ -8,10 +8,10 @@ defineProps({
 
 <template>
     <div 
-        class="bg-white rounded-2xl shadow-xl border border-gray-100 transition-all duration-200 overflow-hidden"
+        class="bg-white rounded-[2.5rem] shadow-xl shadow-orange-500/5 border border-white transition-all duration-300 overflow-hidden"
         :class="[
             noPadding ? '' : padding,
-            hover ? 'hover:shadow-2xl hover:-translate-y-1' : ''
+            hover ? 'hover:shadow-2xl hover:shadow-orange-500/10 hover:-translate-y-2' : ''
         ]"
     >
         <slot />

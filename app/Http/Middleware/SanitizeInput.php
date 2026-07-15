@@ -12,8 +12,8 @@ class SanitizeInput
         $input = $request->all();
 
         array_walk_recursive($input, function (&$value, $key) {
-            if (is_string($value) && !in_array($key, ['password', 'password_confirmation', 'current_password', '_token'])) {
-                $value = trim($value);
+            if (is_string($value) && ! in_array($key, ['password', 'password_confirmation', 'current_password', '_token'])) {
+                $value = strip_tags(trim($value));
             }
         });
 

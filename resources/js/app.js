@@ -7,8 +7,8 @@ import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createApp, h } from 'vue';
 import { ZiggyVue } from 'ziggy-js';
 import { createPinia } from 'pinia';
-import ToastNotification from '@/Components/ToastNotification.vue';
-import { toastPlugin } from '@/Plugins/toast';
+import ToastNotification from '@/components/ToastNotification.vue';
+import { toastPlugin } from '@/plugins/toast';
 import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement, PointElement, LineElement, Filler } from 'chart.js';
 
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement, PointElement, LineElement, Filler);
@@ -20,8 +20,8 @@ createInertiaApp({
     title: (title) => `${title} - ${appName}`,
     resolve: (name) =>
         resolvePageComponent(
-            `./Pages/${name}.vue`,
-            import.meta.glob('./Pages/**/*.vue'),
+            `./views/${name}.vue`,
+            import.meta.glob('./views/**/*.vue'),
         ),
     setup({ el, App, props, plugin }) {
         const app = createApp({ render: () => h(App, props) })

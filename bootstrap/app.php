@@ -1,8 +1,14 @@
 <?php
 
+use App\Http\Middleware\ApplySettings;
+use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\SanitizeInput;
+use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -11,19 +17,22 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->prefersJsonResponses()
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->web(append: [
-            \App\Http\Middleware\HandleInertiaRequests::class,
-            \App\Http\Middleware\SanitizeInput::class,
-            \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            ApplySettings::class,
+            HandleInertiaRequests::class,
+            SanitizeInput::class,
+            SecurityHeaders::class,
+            AddLinkHeadersForPreloadedAssets::class,
         ]);
 
         $middleware->alias([
-            'role' => \App\Http\Middleware\CheckRole::class,
+            'role' => CheckRole::class,
         ]);
 
         $middleware->redirectGuestsTo('/login');
-        $middleware->validateCsrfTokens(except: ['api/*']);
+        $middleware->preventRequestForgery(except: ['api/*']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

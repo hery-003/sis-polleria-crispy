@@ -1,10 +1,10 @@
-﻿<?php
+<?php
 
-use App\Models\User;
+use App\Models\Category;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductVariant;
-use App\Models\Category;
+use App\Models\User;
 
 beforeEach(function () {
     $this->user = User::factory()->create(['role' => 'cashier']);

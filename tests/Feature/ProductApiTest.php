@@ -1,8 +1,8 @@
 <?php
 
-use App\Models\User;
-use App\Models\Product;
 use App\Models\Category;
+use App\Models\Product;
+use App\Models\User;
 
 beforeEach(function () {
     $this->user = User::factory()->create(['role' => 'admin']);

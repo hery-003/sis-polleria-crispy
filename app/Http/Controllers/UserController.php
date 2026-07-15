@@ -2,69 +2,116 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Routing\Attributes\Authorize;
+use Illuminate\Routing\Attributes\Middleware;
+use App\Http\Requests\StoreUserRequest;
+use App\Http\Requests\UpdateUserRequest;
+use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Inertia\Inertia;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\Rules;
 
 class UserController extends Controller
 {
+    #[Middleware(['auth', 'role:admin'])]
+    #[Authorize('manage-users')]
     public function index()
     {
+        $this->authorize('viewAny', User::class);
+        $activeUsers = Cache::tags(['users'])->remember('users_active_page_'.request('page', 1), 300, function () {
+            return User::select('id', 'name', 'email', 'role', 'is_active', 'created_at')
+                ->orderBy('is_active', 'desc')->orderBy('name')->paginate(20);
+        });
+        $trashedUsers = User::onlyTrashed()->select('id', 'name', 'email', 'role')->get();
+
         return Inertia::render('Users/Index', [
-            'users' => User::all()
+            'users' => $activeUsers,
+            'trashedUsers' => $trashedUsers,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreUserRequest $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|lowercase|email|max:255|unique:'.User::class,
-            'password' => ['required', 'confirmed', Rules\Password::defaults()],
-            'role' => 'required|in:admin,cashier,waiter',
-        ]);
+        $this->authorize('create', User::class);
+        $user = User::create($request->validated());
 
-        User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'role' => $request->role,
-        ]);
+        AuditLog::log('user_created', 'User', $user->id, null, $user->toArray());
+
+        Cache::tags(['users'])->flush();
 
         return redirect()->back()->with('success', 'Usuario creado correctamente');
     }
 
-    public function update(Request $request, User $user)
+    public function update(UpdateUserRequest $request, User $user)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|lowercase|email|max:255|unique:users,email,' . $user->id,
-            'role' => 'required|in:admin,cashier,waiter',
-            'password' => ['nullable', 'confirmed', Rules\Password::defaults()],
-        ]);
-
+        $this->authorize('update', $user);
+        $old = $user->toArray();
+        $data = $request->validated();
         $user->update([
-            'name' => $request->name,
-            'email' => $request->email,
-            'role' => $request->role,
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'role' => $data['role'],
         ]);
 
-        if ($request->filled('password')) {
-            $user->update(['password' => Hash::make($request->password)]);
+        if (! empty($data['password'])) {
+            $user->update(['password' => $data['password']]);
         }
+
+        AuditLog::log('user_updated', 'User', $user->id, $old, $user->fresh()->toArray());
+
+        Cache::tags(['users'])->flush();
 
         return redirect()->back()->with('success', 'Usuario actualizado correctamente');
     }
 
     public function destroy(User $user)
     {
+        $this->authorize('delete', $user);
         if ($user->id === auth()->id()) {
             return redirect()->back()->with('error', 'No puedes eliminarte a ti mismo');
         }
 
+        $old = $user->toArray();
         $user->delete();
+
+        AuditLog::log('user_deleted', 'User', $user->id, $old);
+
+        Cache::tags(['users'])->flush();
+
         return redirect()->back()->with('success', 'Usuario eliminado');
+    }
+
+    public function restore($id)
+    {
+        $this->authorize('restore', User::class);
+        $user = User::onlyTrashed()->findOrFail($id);
+        $user->restore();
+
+        AuditLog::log('user_restored', 'User', $user->id, null, $user->toArray());
+
+        Cache::tags(['users'])->flush();
+
+        return redirect()->back()->with('success', 'Usuario restaurado correctamente');
+    }
+
+    public function toggleActive(User $user)
+    {
+        $this->authorize('update', $user);
+        if ($user->id === auth()->id()) {
+            return redirect()->back()->with('error', 'No puedes desactivarte a ti mismo');
+        }
+
+        $old = $user->toArray();
+        $user->update(['is_active' => !$user->is_active]);
+
+        $action = $user->is_active ? 'user_activated' : 'user_deactivated';
+        AuditLog::log($action, 'User', $user->id, $old, $user->fresh()->toArray());
+
+        $msg = $user->is_active ? 'Usuario activado correctamente' : 'Usuario desactivado correctamente';
+
+        Cache::tags(['users'])->flush();
+
+        return redirect()->back()->with('success', $msg);
     }
 }

@@ -2,22 +2,25 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Routing\Attributes\Middleware;
+use App\Events\OrderUpdated;
 use App\Models\Order;
 use App\Services\OrderService;
-use Inertia\Inertia;
-use Illuminate\Support\Facades\Cache;
 use Exception;
-use App\Events\OrderUpdated;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Inertia\Inertia;
 
 class WaiterController extends Controller
 {
+    #[Middleware(['auth', 'role:admin,cashier,waiter'])]
     public function __construct(
         protected OrderService $orderService
     ) {}
 
     public function index()
     {
-        $orders = Cache::remember('waiter_orders', now()->addSeconds(10), function () {
+        $orders = Cache::remember('waiter_orders', now()->addSeconds(config('cache_ttl.waiter_orders')), function () {
             return Order::with(['items.product', 'items.variant', 'mesa', 'user'])
                 ->whereIn('status', ['ready', 'completed'])
                 ->where('type', 'dine_in')
@@ -47,6 +50,7 @@ class WaiterController extends Controller
 
             return redirect()->back()->with('success', 'Pedido marcado como entregado');
         } catch (Exception $e) {
+            Log::error('Error marking order delivered: '.$e->getMessage());
             return redirect()->back()->with('error', $e->getMessage());
         }
     }

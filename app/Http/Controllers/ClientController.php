@@ -2,50 +2,45 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Routing\Attributes\Middleware;
+use App\Http\Requests\StoreClientRequest;
+use App\Http\Requests\UpdateClientRequest;
 use App\Models\Client;
-use App\Models\Order;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Inertia\Inertia;
 
 class ClientController extends Controller
 {
+    #[Middleware(['auth', 'role:admin,cashier'])]
     public function index()
     {
-        $clients = Client::where('is_active', true)
-            ->orderBy('name')
-            ->paginate(20);
+        $clients = Cache::tags(['clients'])->remember('clients_page_'.request('page', 1), 300, function () {
+            return Client::where('is_active', true)
+                ->select('id', 'name', 'phone', 'document_number', 'email', 'is_active', 'created_at')
+                ->orderBy('name')
+                ->paginate(20);
+        });
 
         return Inertia::render('Clients/Index', [
-            'clients' => $clients
+            'clients' => $clients,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreClientRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'email' => 'nullable|email|max:255',
-            'document_number' => 'nullable|string|max:20',
-            'address' => 'nullable|string|max:500',
-        ]);
+        Client::create($request->validated());
 
-        Client::create($validated);
+        Cache::tags(['clients'])->flush();
 
         return redirect()->back()->with('success', 'Cliente registrado correctamente');
     }
 
-    public function update(Request $request, Client $client)
+    public function update(UpdateClientRequest $request, Client $client)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'email' => 'nullable|email|max:255',
-            'document_number' => 'nullable|string|max:20',
-            'address' => 'nullable|string|max:500',
-        ]);
+        $client->update($request->validated());
 
-        $client->update($validated);
+        Cache::tags(['clients'])->flush();
 
         return redirect()->back()->with('success', 'Cliente actualizado correctamente');
     }
@@ -53,6 +48,8 @@ class ClientController extends Controller
     public function destroy(Client $client)
     {
         $client->delete();
+
+        Cache::tags(['clients'])->flush();
 
         return redirect()->back()->with('success', 'Cliente eliminado correctamente');
     }
@@ -65,8 +62,8 @@ class ClientController extends Controller
         $clients = Client::where('is_active', true)
             ->where(function ($q) use ($escaped) {
                 $q->where('name', 'like', "%{$escaped}%")
-                  ->orWhere('phone', 'like', "%{$escaped}%")
-                  ->orWhere('document_number', 'like', "%{$escaped}%");
+                    ->orWhere('phone', 'like', "%{$escaped}%")
+                    ->orWhere('document_number', 'like', "%{$escaped}%");
             })
             ->limit(10)
             ->get();
@@ -76,7 +73,7 @@ class ClientController extends Controller
 
     public function orders(Client $client)
     {
-        $orders = Order::where('client_id', $client->id)
+        $orders = $client->orders()
             ->whereIn('status', ['completed'])
             ->latest()
             ->take(5)

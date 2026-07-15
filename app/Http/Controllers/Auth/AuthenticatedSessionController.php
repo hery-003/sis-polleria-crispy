@@ -31,10 +31,19 @@ class AuthenticatedSessionController extends Controller
     {
         $request->authenticate();
 
+        $user = auth()->user();
+
+        if ($user->twoFactorEnabled()) {
+            $userId = $user->id;
+            $remember = $request->boolean('remember');
+            $request->session()->put('login.two_factor_user_id', $userId);
+            $request->session()->put('login.two_factor_remember', $remember);
+            auth()->logout();
+
+            return redirect()->route('two-factor.challenge');
+        }
+
         $request->session()->regenerate();
-
-        $user = $request->user();
-
         return redirect()->intended(route('dashboard', absolute: false));
     }
 

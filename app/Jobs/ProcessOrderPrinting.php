@@ -6,8 +6,11 @@ use App\Models\Order;
 use App\Services\PrintService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\Attributes\Queue;
 use Illuminate\Support\Facades\Log;
 
+#[Queue('printing')]
+#[FailOnTimeout]
 class ProcessOrderPrinting implements ShouldQueue
 {
     use Queueable;
@@ -17,9 +20,7 @@ class ProcessOrderPrinting implements ShouldQueue
      */
     public function __construct(
         protected int $orderId
-    ) {
-        $this->onQueue('printing');
-    }
+    ) {}
 
     /**
      * Execute the job.
@@ -29,18 +30,19 @@ class ProcessOrderPrinting implements ShouldQueue
         $order = Order::with(['items.product', 'items.variant', 'user', 'mesa', 'metodoPago'])
             ->find($this->orderId);
 
-        if (!$order || !$order->exists) {
+        if (! $order || ! $order->exists) {
             Log::warning("Order #{$this->orderId} no longer exists, skipping print job.");
+
             return;
         }
 
         try {
             $printService->printOrderReceipt($order);
             $printService->printKitchenOrder($order);
-            
+
             Log::info("Order #{$order->order_number} printed successfully via Job.");
         } catch (\Exception $e) {
-            Log::error("Failed to print order #{$order->order_number} via Job: " . $e->getMessage());
+            Log::error("Failed to print order #{$order->order_number} via Job: ".$e->getMessage());
             throw $e;
         }
     }

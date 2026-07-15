@@ -2,41 +2,47 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Routing\Attributes\Authorize;
+use Illuminate\Routing\Attributes\Middleware;
+use App\Http\Requests\StoreMesaRequest;
+use App\Http\Requests\UpdateMesaRequest;
 use App\Models\Mesa;
-use Illuminate\Http\Request;
 
 class MesaController extends Controller
 {
+    #[Middleware(['auth', 'role:admin'])]
+    #[Authorize('manage-mesas')]
     public function index()
     {
-        $mesas = Mesa::orderBy('number')->get();
-        return inertia('Mesas/Index', compact('mesas'));
+        $mesas = Mesa::withCount(['orders as active_orders_count' => function ($q) {
+            $q->whereNotIn('status', ['completed', 'cancelled']);
+        }])->orderBy('number')->get();
+
+        $mesas->each(function ($mesa) {
+            if (! $mesa->is_active) {
+                $mesa->status = 'inactive';
+            } elseif ($mesa->reserved_at) {
+                $mesa->status = 'reserved';
+            } elseif ($mesa->active_orders_count > 0) {
+                $mesa->status = 'occupied';
+            } else {
+                $mesa->status = 'available';
+            }
+        });
+
+        return inertia('Mesas/Index', ['mesas' => $mesas]);
     }
 
-    public function store(Request $request)
+    public function store(StoreMesaRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'number' => 'required|integer|unique:mesas,number',
-            'is_active' => 'boolean',
-        ]);
-
-        $validated['is_active'] = $request->boolean('is_active');
-        Mesa::create($validated);
+        Mesa::create($request->validated());
 
         return redirect()->route('mesas.index')->with('success', 'Mesa creada correctamente');
     }
 
-    public function update(Request $request, Mesa $mesa)
+    public function update(UpdateMesaRequest $request, Mesa $mesa)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'number' => 'required|integer|unique:mesas,number,' . $mesa->id,
-            'is_active' => 'boolean',
-        ]);
-
-        $validated['is_active'] = $request->boolean('is_active');
-        $mesa->update($validated);
+        $mesa->update($request->validated());
 
         return redirect()->route('mesas.index')->with('success', 'Mesa actualizada correctamente');
     }

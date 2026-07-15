@@ -2,27 +2,31 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Category;
-use App\Models\MetodoPago;
-use App\Models\Mesa;
-use App\Models\ProductVariant;
-use App\Services\OrderService;
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use Illuminate\Support\Facades\Cache;
-use Exception;
-use App\Events\OrderCreated;
+use Illuminate\Routing\Attributes\Middleware;
 use App\Events\OrderUpdated;
+use App\Http\Requests\StorePOSOrderRequest;
+use App\Jobs\ProcessOrderFulfillment;
+use App\Jobs\ProcessOrderPrinting;
+use App\Models\Category;
+use App\Models\Mesa;
+use App\Models\MetodoPago;
+use App\Services\OrderService;
+use Exception;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Inertia\Inertia;
 
 class POSController extends Controller
 {
+    #[Middleware(['auth', 'role:admin,cashier'])]
     public function __construct(
         protected OrderService $orderService
     ) {}
 
     public function index()
     {
-        $categories = Cache::remember('pos_categories', now()->addMinutes(30), function () {
+        $categories = Cache::flexible('pos_categories', config('cache_ttl.pos_categories'), function () {
             return Category::where('is_active', true)
                 ->orderBy('sort_order')
                 ->with(['products' => function ($query) {
@@ -41,13 +45,19 @@ class POSController extends Controller
                 ->get();
         });
 
-        $metodosPago = Cache::remember('pos_metodos_pago', now()->addMinutes(60), function () {
+        Cache::touch('pos_categories', config('cache_ttl.pos_categories')[1]);
+
+        $metodosPago = Cache::flexible('pos_metodos_pago', config('cache_ttl.pos_metodos_pago'), function () {
             return MetodoPago::where('is_active', true)->get();
         });
 
-        $mesas = Cache::remember('pos_mesas', now()->addMinutes(60), function () {
+        Cache::touch('pos_metodos_pago', config('cache_ttl.pos_metodos_pago')[1]);
+
+        $mesas = Cache::flexible('pos_mesas', config('cache_ttl.pos_mesas'), function () {
             return Mesa::where('is_active', true)->orderBy('number')->get();
         });
+
+        Cache::touch('pos_mesas', config('cache_ttl.pos_mesas')[1]);
 
         return Inertia::render('POS/Index', [
             'categories' => $categories,
@@ -56,23 +66,9 @@ class POSController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StorePOSOrderRequest $request)
     {
-        $validated = $request->validate([
-            'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|integer|exists:products,id',
-            'items.*.variant_id' => 'required|integer|exists:product_variants,id',
-            'items.*.price' => 'required|numeric|min:0',
-            'items.*.quantity' => 'required|integer|min:1',
-            'payment_method' => 'required|in:cash,card,yape,plin',
-            'type' => 'required|in:dine_in,take_out,delivery',
-            'total' => 'nullable|numeric',
-            'metodo_pago_id' => 'nullable|integer',
-            'notes' => 'nullable|string',
-            'mesa_id' => 'nullable|integer',
-            'client_id' => 'nullable|integer|exists:clients,id',
-            'auto_pay' => 'nullable|boolean',
-        ]);
+        $validated = $request->validated();
 
         try {
             $order = $this->orderService->createOrder([
@@ -83,10 +79,12 @@ class POSController extends Controller
                 'notes' => $validated['notes'] ?? null,
                 'mesa_id' => $validated['mesa_id'] ?? null,
                 'client_id' => $validated['client_id'] ?? null,
+                'received_amount' => $validated['received_amount'] ?? null,
+                'change' => $validated['change'] ?? null,
             ], auth()->id());
 
             // Auto-pay: marcar como pagado y completar si no es para mesa
-            if (!empty($validated['auto_pay']) && $validated['auto_pay'] !== false) {
+            if (! empty($validated['auto_pay']) && $validated['auto_pay'] !== false) {
                 $this->orderService->markOrderPaid($order, $validated['payment_method']);
                 if ($validated['type'] !== 'dine_in') {
                     $order->update(['status' => 'completed']);
@@ -94,23 +92,19 @@ class POSController extends Controller
                 OrderUpdated::dispatch($order->fresh());
             }
 
-            // Invalidar caches
-            Cache::forget('dashboard_data');
-            Cache::forget('kitchen_orders');
-            Cache::forget('reports_stats_' . now()->format('Y-m-d') . '_' . now()->format('Y-m-d'));
-
-            // Dispatch printing to background job
-            \App\Jobs\ProcessOrderPrinting::dispatch($order->id);
-
-            // Disparar evento de broadcast
-            OrderCreated::dispatch($order);
+            // Dispatch job chain: print → fulfill (broadcast + cache invalidation)
+            Bus::chain([
+                new ProcessOrderPrinting($order->id),
+                new ProcessOrderFulfillment($order->id),
+            ])->onQueue('printing')->dispatch();
 
             return redirect()->back()->with([
                 'success' => 'Pedido registrado correctamente',
                 'last_order_id' => $order->id,
             ]);
         } catch (Exception $e) {
-            return redirect()->back()->with('error', 'Error al procesar el pedido: ' . $e->getMessage());
+            Log::error('Error processing POS order: '.$e->getMessage());
+            return redirect()->back()->with('error', 'Error al procesar el pedido: '.$e->getMessage());
         }
     }
 }

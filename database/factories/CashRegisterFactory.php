@@ -15,16 +15,18 @@ class CashRegisterFactory extends Factory
         return [
             'user_id' => User::factory(),
             'opened_at' => now(),
+            'closed_at' => null,
             'opening_balance' => fake()->randomFloat(2, 100, 500),
+            'closing_balance' => 0,
             'status' => 'open',
         ];
     }
 
     public function closed(): static
     {
-        return $this->state(fn(array $attr) => [
-            'closed_at' => now(),
-            'closing_balance' => fake()->randomFloat(2, 200, 1000),
+        return $this->state(fn (array $attributes) => [
+            'closed_at' => now()->addHours(8),
+            'closing_balance' => fake()->randomFloat(2, 500, 2000),
             'status' => 'closed',
         ]);
     }

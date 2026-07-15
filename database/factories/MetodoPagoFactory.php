@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 class MetodoPagoFactory extends Factory
 {
     protected $model = MetodoPago::class;
+
     protected $table = 'metodos_pago';
 
     public function definition(): array

@@ -2,28 +2,23 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
+#[Fillable('name', 'phone', 'email', 'document_number', 'address', 'points', 'is_active')]
 class Client extends Model
 {
     use HasFactory, SoftDeletes;
 
-    protected $fillable = [
-        'name',
-        'phone',
-        'email',
-        'document_number',
-        'address',
-        'points',
-        'is_active',
-    ];
-
-    protected $casts = [
-        'is_active' => 'boolean',
-        'points' => 'integer',
-    ];
+    protected function casts(): array
+    {
+        return [
+            'is_active' => 'boolean',
+            'points' => 'integer',
+        ];
+    }
 
     public function orders()
     {
@@ -32,6 +27,10 @@ class Client extends Model
 
     public function getTotalPurchasesAttribute()
     {
-        return $this->orders()->where('status', 'completed')->sum('total_amount');
+        if ($this->relationLoaded('orders')) {
+            return $this->orders->where('status', 'completed')->sum('total_amount');
+        }
+
+        return $this->loadAggregate('orders', 'total_amount', 'sum', fn ($q) => $q->where('status', 'completed'))->orders_aggregate ?? 0;
     }
 }

@@ -24,12 +24,15 @@ class OrderPolicy
 
     public function update(User $user, Order $order): bool
     {
-        if (!in_array($user->role, ['admin', 'cashier'])) return false;
-        return !in_array($order->status, ['completed', 'cancelled']);
+        if (! in_array($user->role, ['admin', 'cashier'])) {
+            return false;
+        }
+
+        return ! in_array($order->status, ['completed', 'cancelled']);
     }
 
     public function delete(User $user, Order $order): bool
     {
-        return $user->role === 'admin' && !in_array($order->status, ['completed', 'cancelled']);
+        return $user->role === 'admin' && ! in_array($order->status, ['completed', 'cancelled']);
     }
 }

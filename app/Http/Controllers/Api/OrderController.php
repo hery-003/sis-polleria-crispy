@@ -2,14 +2,21 @@
 
 namespace App\Http\Controllers\Api;
 
+use Illuminate\Routing\Attributes\Middleware;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\CancelOrderRequest;
+use App\Http\Requests\Api\MarkPaidRequest;
+use App\Http\Requests\Api\StoreOrderRequest;
+use App\Http\Requests\Api\UpdateOrderStatusRequest;
 use App\Models\Order;
 use App\Services\OrderService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class OrderController extends Controller
 {
+    #[Middleware('auth:sanctum')]
     protected OrderService $orderService;
 
     public function __construct(OrderService $orderService)
@@ -19,47 +26,47 @@ class OrderController extends Controller
 
     public function index(Request $request)
     {
-        $query = Order::with('user', 'items.product', 'items.variant', 'mesa', 'metodoPago', 'client');
+        $cacheKey = 'api_orders_'.md5(serialize($request->only(['status', 'date_from', 'date_to', 'page', 'per_page'])));
 
-        if ($request->status) {
-            $query->where('status', $request->status);
-        }
+        return Cache::tags(['orders'])->remember($cacheKey, 60, function () use ($request) {
+            $query = Order::with([
+                'user:id,name',
+                'items.product:id,name,image',
+                'items.variant:id,name,price',
+                'mesa:id,name',
+                'metodoPago:id,name,slug',
+                'client:id,name',
+            ])
+                ->select('id', 'order_number', 'user_id', 'mesa_id', 'metodo_pago_id', 'client_id', 'total_amount', 'status', 'type', 'payment_status', 'payment_method', 'received_amount', 'change', 'created_at');
 
-        if ($request->date_from) {
-            $query->whereDate('created_at', '>=', $request->date_from);
-        }
+            if ($request->status) {
+                $query->where('status', $request->status);
+            }
 
-        if ($request->date_to) {
-            $query->whereDate('created_at', '<=', $request->date_to);
-        }
+            if ($request->date_from) {
+                $query->whereDate('created_at', '>=', $request->date_from);
+            }
 
-        return $query->orderBy('created_at', 'desc')->paginate($request->per_page ?? 50);
+            if ($request->date_to) {
+                $query->whereDate('created_at', '<=', $request->date_to);
+            }
+
+            $perPage = min((int) ($request->per_page ?? 50), 100);
+
+            return $query->orderBy('created_at', 'desc')->paginate($perPage);
+        });
     }
 
-    public function store(Request $request)
+    public function store(StoreOrderRequest $request)
     {
-        $validator = Validator::make($request->all(), [
-            'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|exists:products,id',
-            'items.*.variant_id' => 'required|exists:product_variants,id',
-            'items.*.quantity' => 'required|integer|min:1',
-            'items.*.price' => 'required|numeric|min:0',
-            'payment_method' => 'required|string',
-            'type' => 'required|in:dine_in,take_out,delivery',
-            'mesa_id' => 'nullable|exists:mesas,id',
-            'metodo_pago_id' => 'nullable|exists:metodos_pago,id',
-            'client_id' => 'nullable|exists:clients,id',
-            'notes' => 'nullable|string|max:500',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         try {
-            $order = $this->orderService->createOrder($request->all(), $request->user()->id);
+            $order = $this->orderService->createOrder($request->validated(), $request->user()->id);
+
+            Cache::tags(['orders', 'cancellations'])->flush();
+
             return response()->json($order->load('items.product', 'items.variant', 'mesa'), 201);
         } catch (\Exception $e) {
+            Log::error('Error creating order: '.$e->getMessage());
             return response()->json(['message' => $e->getMessage()], 422);
         }
     }
@@ -69,57 +76,48 @@ class OrderController extends Controller
         return $order->load('user', 'items.product', 'items.variant', 'mesa', 'metodoPago', 'client');
     }
 
-    public function updateStatus(Request $request, Order $order)
+    public function updateStatus(UpdateOrderStatusRequest $request, Order $order)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:pending,cooking,ready,completed,cancelled',
-            'reason' => 'required_if:status,cancelled|string|min:3',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         try {
             $this->orderService->updateOrderStatus($order, $request->status, $request->reason);
+
+            Cache::tags(['orders', 'cancellations'])->flush();
+
             return response()->json($order->fresh()->load('items.product', 'items.variant'));
         } catch (\Exception $e) {
+            Log::error('Error updating order status: '.$e->getMessage());
             return response()->json(['message' => $e->getMessage()], 422);
         }
     }
 
-    public function cancel(Request $request, Order $order)
+    public function cancel(CancelOrderRequest $request, Order $order)
     {
-        $validator = Validator::make($request->all(), [
-            'reason' => 'required|string|min:3',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
+        if ($order->payment_status === 'paid') {
+            return response()->json(['message' => 'No se puede cancelar un pedido pagado. Realice una devolución desde el módulo de caja.'], 422);
         }
 
         try {
             $this->orderService->cancelOrder($order, $request->reason);
+
+            Cache::tags(['orders', 'cancellations'])->flush();
+
             return response()->json($order->fresh()->load('items.product', 'items.variant'));
         } catch (\Exception $e) {
+            Log::error('Error cancelling order: '.$e->getMessage());
             return response()->json(['message' => $e->getMessage()], 422);
         }
     }
 
-    public function markPaid(Request $request, Order $order)
+    public function markPaid(MarkPaidRequest $request, Order $order)
     {
-        $validator = Validator::make($request->all(), [
-            'payment_method' => 'required|string',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         try {
             $order = $this->orderService->markOrderPaid($order, $request->payment_method);
+
+            Cache::tags(['orders'])->flush();
+
             return response()->json($order->load('items.product', 'items.variant'));
         } catch (\Exception $e) {
+            Log::error('Error marking order paid: '.$e->getMessage());
             return response()->json(['message' => $e->getMessage()], 422);
         }
     }

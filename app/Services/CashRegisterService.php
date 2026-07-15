@@ -2,11 +2,10 @@
 
 namespace App\Services;
 
-use App\Models\CashRegister;
 use App\Models\CashMovement;
+use App\Models\CashRegister;
 use App\Models\Order;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class CashRegisterService
 {
@@ -56,34 +55,31 @@ class CashRegisterService
     public function calculateExpectedCash(CashRegister $register): array
     {
         $openingBalance = $register->opening_balance;
+        $dateRange = [$register->opened_at, $register->closed_at ?? now()];
 
-        $cashSales = Order::whereBetween('orders.created_at', [$register->opened_at, $register->closed_at ?? now()])
+        $cashSales = Order::whereBetween('created_at', $dateRange)
             ->where('payment_method', 'cash')
             ->where('payment_status', 'paid')
             ->sum('total_amount');
 
-        $cashInMovements = CashMovement::where('cash_register_id', $register->id)
-            ->where('type', 'in')
-            ->sum('amount');
+        $movementsAgg = $register->movements()
+            ->selectRaw("COALESCE(SUM(CASE WHEN type='in' THEN amount ELSE 0 END), 0) as cash_in, COALESCE(SUM(CASE WHEN type='out' THEN amount ELSE 0 END), 0) as cash_out, COUNT(*) as movements_count")
+            ->first();
 
-        $cashOutMovements = CashMovement::where('cash_register_id', $register->id)
-            ->where('type', 'out')
-            ->sum('amount');
+        $paidOrders = Order::whereBetween('created_at', $dateRange)
+            ->where('payment_status', 'paid')
+            ->count();
 
-        $expectedCash = $openingBalance + $cashSales + $cashInMovements - $cashOutMovements;
-        $difference = 0;
-        $status = 'ok';
+        $expectedCash = $openingBalance + $cashSales + (float) $movementsAgg->cash_in - (float) $movementsAgg->cash_out;
 
         return [
             'opening_balance' => $openingBalance,
             'cash_sales' => $cashSales,
-            'cash_in' => $cashInMovements,
-            'cash_out' => $cashOutMovements,
+            'cash_in' => (float) $movementsAgg->cash_in,
+            'cash_out' => (float) $movementsAgg->cash_out,
             'expected_cash' => $expectedCash,
-            'total_orders' => Order::whereBetween('orders.created_at', [$register->opened_at, $register->closed_at ?? now()])
-                ->where('payment_status', 'paid')
-                ->count(),
-            'movements_count' => CashMovement::where('cash_register_id', $register->id)->count(),
+            'total_orders' => $paidOrders,
+            'movements_count' => $movementsAgg->movements_count,
         ];
     }
 

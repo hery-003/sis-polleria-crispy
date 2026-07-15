@@ -2,23 +2,26 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Routing\Attributes\Middleware;
+use App\Events\OrderUpdated;
+use App\Http\Requests\UpdateKitchenStatusRequest;
 use App\Models\Order;
 use App\Services\OrderService;
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use Illuminate\Support\Facades\Cache;
 use Exception;
-use App\Events\OrderUpdated;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Inertia\Inertia;
 
 class KitchenController extends Controller
 {
+    #[Middleware(['auth', 'role:admin,cashier,waiter'])]
     public function __construct(
         protected OrderService $orderService
     ) {}
 
     public function index()
     {
-        $orders = Cache::remember('kitchen_orders', now()->addSeconds(10), function () {
+        $orders = Cache::remember('kitchen_orders', now()->addSeconds(config('cache_ttl.kitchen_orders')), function () {
             return Order::with(['items.product', 'items.variant'])
                 ->whereIn('status', ['pending', 'cooking', 'ready'])
                 ->orderBy('created_at', 'asc')
@@ -30,16 +33,9 @@ class KitchenController extends Controller
         ]);
     }
 
-    public function updateStatus(Request $request, Order $order)
+    public function updateStatus(UpdateKitchenStatusRequest $request, Order $order)
     {
-        if (!$order->canBeModified()) {
-            return redirect()->back()->with('error', 'No se puede modificar un pedido completado o cancelado');
-        }
-
-        $validated = $request->validate([
-            'status' => 'required|in:pending,cooking,ready,completed,cancelled',
-            'cancellation_reason' => 'required_if:status,cancelled|string|min:3',
-        ]);
+        $validated = $request->validated();
 
         try {
             $reason = $validated['status'] === 'cancelled'
@@ -60,6 +56,7 @@ class KitchenController extends Controller
 
             return redirect()->back()->with('success', 'Estado actualizado');
         } catch (Exception $e) {
+            Log::error('Error updating kitchen status: '.$e->getMessage());
             return redirect()->back()->with('error', $e->getMessage());
         }
     }

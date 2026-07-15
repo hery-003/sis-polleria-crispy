@@ -44,7 +44,7 @@ class OrderCreated implements ShouldBroadcast
             'mesa' => $this->order->mesa ? ['number' => $this->order->mesa->number] : null,
             'user' => ['name' => $this->order->user?->name],
             'notes' => $this->order->notes,
-            'items' => $this->order->items->map(fn($i) => [
+            'items' => $this->order->items->map(fn ($i) => [
                 'id' => $i->id,
                 'quantity' => $i->quantity,
                 'price' => (float) $i->price,

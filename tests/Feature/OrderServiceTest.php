@@ -1,10 +1,13 @@
 <?php
 
-use App\Models\User;
+use App\Models\CashMovement;
+use App\Models\CashRegister;
+use App\Models\Category;
+use App\Models\Client;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductVariant;
-use App\Models\Category;
+use App\Models\User;
 use App\Services\OrderService;
 
 beforeEach(function () {
@@ -50,7 +53,7 @@ it('requires items to create an order', function () {
         'type' => 'dine_in',
     ];
 
-    expect(fn() => $this->orderService->createOrder($data, $this->user->id))
+    expect(fn () => $this->orderService->createOrder($data, $this->user->id))
         ->toThrow(Exception::class, 'El pedido debe tener al menos un producto');
 });
 
@@ -68,7 +71,7 @@ it('requires valid variant for order items', function () {
         'type' => 'dine_in',
     ];
 
-    expect(fn() => $this->orderService->createOrder($data, $this->user->id))
+    expect(fn () => $this->orderService->createOrder($data, $this->user->id))
         ->toThrow(Exception::class);
 });
 
@@ -125,7 +128,7 @@ it('cancels an order and restores stock', function () {
 it('requires cancellation reason', function () {
     $order = Order::factory()->create(['status' => 'pending']);
 
-    expect(fn() => $this->orderService->cancelOrder($order, null))
+    expect(fn () => $this->orderService->cancelOrder($order, null))
         ->toThrow(Exception::class, 'requiere un motivo');
 });
 
@@ -154,14 +157,14 @@ it('marks order as paid', function () {
 it('cannot modify completed orders', function () {
     $order = Order::factory()->create(['status' => 'completed', 'payment_status' => 'paid']);
 
-    expect(fn() => $this->orderService->updateOrderStatus($order, 'cooking'))
+    expect(fn () => $this->orderService->updateOrderStatus($order, 'cooking'))
         ->toThrow(Exception::class, 'No se puede modificar');
 });
 
 it('cannot cancel paid orders without reason', function () {
     $order = Order::factory()->create(['status' => 'pending', 'payment_status' => 'paid']);
 
-    expect(fn() => $this->orderService->cancelOrder($order, null))
+    expect(fn () => $this->orderService->cancelOrder($order, null))
         ->toThrow(Exception::class);
 });
 
@@ -199,7 +202,7 @@ it('prevents negative quantities', function () {
         'type' => 'dine_in',
     ];
 
-    expect(fn() => $this->orderService->createOrder($data, $this->user->id))
+    expect(fn () => $this->orderService->createOrder($data, $this->user->id))
         ->toThrow(Exception::class, 'La cantidad debe ser mayor a 0');
 });
 
@@ -219,7 +222,7 @@ it('prevents insufficient stock', function () {
         'type' => 'dine_in',
     ];
 
-    expect(fn() => $this->orderService->createOrder($data, $this->user->id))
+    expect(fn () => $this->orderService->createOrder($data, $this->user->id))
         ->toThrow(Exception::class, 'Stock insuficiente');
 });
 
@@ -239,22 +242,22 @@ it('updates order status correctly', function () {
 it('prevents invalid status transitions', function () {
     $order = Order::factory()->create(['status' => 'pending', 'payment_status' => 'pending']);
 
-    expect(fn() => $this->orderService->updateOrderStatus($order, 'completed'))
+    expect(fn () => $this->orderService->updateOrderStatus($order, 'completed'))
         ->toThrow(Exception::class, 'Transición de estado no válida');
 
-    expect(fn() => $this->orderService->updateOrderStatus($order, 'ready'))
+    expect(fn () => $this->orderService->updateOrderStatus($order, 'ready'))
         ->toThrow(Exception::class, 'Transición de estado no válida');
 });
 
 it('prevents regression to previous status', function () {
     $order = Order::factory()->create(['status' => 'cooking', 'payment_status' => 'pending']);
 
-    expect(fn() => $this->orderService->updateOrderStatus($order, 'pending'))
+    expect(fn () => $this->orderService->updateOrderStatus($order, 'pending'))
         ->toThrow(Exception::class, 'Transición de estado no válida');
 });
 
 it('awards points when marking paid with client', function () {
-    $client = \App\Models\Client::factory()->create(['points' => 0]);
+    $client = Client::factory()->create(['points' => 0]);
     $data = [
         'items' => [
             [
@@ -277,7 +280,7 @@ it('awards points when marking paid with client', function () {
 });
 
 it('deducts exact points on cancellation even if client spent some', function () {
-    $client = \App\Models\Client::factory()->create(['points' => 100]);
+    $client = Client::factory()->create(['points' => 100]);
     $data = [
         'items' => [
             [
@@ -308,7 +311,7 @@ it('deducts exact points on cancellation even if client spent some', function ()
 });
 
 it('does not create cash movement when cancelling a non-cash paid order', function () {
-    $cashRegister = \App\Models\CashRegister::factory()->create([
+    $cashRegister = CashRegister::factory()->create([
         'user_id' => $this->user->id,
         'status' => 'open',
         'opening_balance' => 500,
@@ -330,9 +333,9 @@ it('does not create cash movement when cancelling a non-cash paid order', functi
     $order = $this->orderService->createOrder($data, $this->user->id);
     $this->orderService->markOrderPaid($order, 'yape');
 
-    expect(\App\Models\CashMovement::count())->toBe(0);
+    expect(CashMovement::count())->toBe(0);
 
     $this->orderService->cancelOrder($order->load('items.variant'), 'Cancelado voluntario');
 
-    expect(\App\Models\CashMovement::count())->toBe(0);
+    expect(CashMovement::count())->toBe(0);
 });

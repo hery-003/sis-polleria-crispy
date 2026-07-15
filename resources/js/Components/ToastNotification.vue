@@ -1,5 +1,5 @@
 <script setup>
-import { toastState } from '@/Plugins/toast'
+import { toastState } from '@/plugins/toast'
 import { watch, ref } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 

@@ -2,16 +2,26 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Routing\Attributes\Authorize;
+use Illuminate\Routing\Attributes\Middleware;
 use App\Models\AuditLog;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Inertia\Inertia;
 
 class AuditLogController extends Controller
 {
+    #[Middleware(['auth', 'role:admin'])]
+    #[Authorize('manage-audit-logs')]
     public function index(Request $request)
     {
-        $query = AuditLog::with('user')
-            ->latest();
+        $cacheKey = 'audit_logs_'.md5(serialize($request->only(['action', 'user_id', 'date_from', 'date_to'])).request('page', 1));
+
+        $logs = Cache::tags(['audit_logs'])->remember($cacheKey, 60, function () use ($request) {
+            $query = AuditLog::with('user:id,name')
+                ->select('id', 'user_id', 'action', 'auditable_type', 'auditable_id', 'old_values', 'new_values', 'ip_address', 'user_agent', 'created_at')
+                ->latest();
 
         if ($request->filled('action')) {
             $query->where('action', $request->action);
@@ -29,14 +39,16 @@ class AuditLogController extends Controller
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
-        $logs = $query->paginate(50)->withQueryString();
+            return $query->paginate(50)->withQueryString();
+        });
 
         $actions = AuditLog::select('action')
             ->distinct()
             ->pluck('action');
 
-        $users = \App\Models\User::select('id', 'name')
+        $users = User::select('id', 'name')
             ->orderBy('name')
+            ->take(100)
             ->get();
 
         return Inertia::render('AuditLogs/Index', [

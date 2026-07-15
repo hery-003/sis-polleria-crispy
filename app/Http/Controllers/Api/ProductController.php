@@ -2,15 +2,21 @@
 
 namespace App\Http\Controllers\Api;
 
+use Illuminate\Routing\Attributes\Middleware;
 use App\Http\Controllers\Controller;
-use App\Models\Product;
+use App\Http\Requests\Api\StoreApiProductRequest;
+use App\Http\Requests\Api\UpdateApiProductRequest;
 use App\Models\Category;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
+use App\Models\Product;
+use App\Services\ProductService;
 
 class ProductController extends Controller
 {
+    #[Middleware('auth:sanctum')]
+    public function __construct(
+        protected ProductService $productService
+    ) {}
+
     public function index()
     {
         return Product::with('category', 'variants')->get();
@@ -21,31 +27,11 @@ class ProductController extends Controller
         return $product->load('category', 'variants');
     }
 
-    public function store(Request $request)
+    public function store(StoreApiProductRequest $request)
     {
-        $validator = Validator::make($request->all(), [
-            'category_id' => 'required|exists:categories,id',
-            'name' => 'required|string|max:255',
-            'slug' => 'required|string|max:255|unique:products',
-            'description' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
-            'is_active' => 'boolean',
-            'variants' => 'nullable|array',
-            'variants.*.name' => 'required|string|max:255',
-            'variants.*.price' => 'required|numeric|min:0',
-            'variants.*.stock' => 'nullable|integer|min:0',
-            'variants.*.is_active' => 'boolean',
-        ]);
+        $data = $request->safe()->except('image', 'variants');
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $data = $request->except('image', 'variants');
-
-        if ($request->hasFile('image')) {
-            $data['image'] = $request->file('image')->store('products', 'public');
-        }
+        $data['image'] = $this->productService->handleImageUpload($request->file('image'));
 
         $product = Product::create($data);
 
@@ -58,29 +44,14 @@ class ProductController extends Controller
         return response()->json($product->load('category', 'variants'), 201);
     }
 
-    public function update(Request $request, Product $product)
+    public function update(UpdateApiProductRequest $request, Product $product)
     {
-        $validator = Validator::make($request->all(), [
-            'category_id' => 'exists:categories,id',
-            'name' => 'string|max:255',
-            'slug' => 'string|max:255|unique:products,slug,' . $product->id,
-            'description' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
-            'is_active' => 'boolean',
-        ]);
+        $data = $request->safe()->except('image');
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $data = $request->except('image');
-
-        if ($request->hasFile('image')) {
-            if ($product->image) {
-                Storage::disk('public')->delete($product->image);
-            }
-            $data['image'] = $request->file('image')->store('products', 'public');
-        }
+        $data['image'] = $this->productService->handleImageUpload(
+            $request->file('image'),
+            $product->image
+        );
 
         $product->update($data);
 
@@ -94,7 +65,10 @@ class ProductController extends Controller
         })->exists()) {
             return response()->json(['message' => 'No se puede eliminar un producto con pedidos activos'], 409);
         }
+
+        $this->productService->deleteProductImage($product->image);
         $product->delete();
+
         return response()->json(['message' => 'Producto eliminado']);
     }
 

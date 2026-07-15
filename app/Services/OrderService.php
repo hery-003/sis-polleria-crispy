@@ -2,15 +2,24 @@
 
 namespace App\Services;
 
+use App\Events\SecurityAlert;
+use App\Models\AuditLog;
+use App\Models\CashMovement;
+use App\Models\CashRegister;
 use App\Models\Order;
 use App\Models\OrderItem;
-use App\Models\ProductVariant;
-use App\Models\AuditLog;
-use Illuminate\Support\Facades\DB;
+use App\Models\User;
 use Exception;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class OrderService
 {
+    public function __construct(
+        protected StockService $stockService,
+        protected LoyaltyService $loyaltyService,
+    ) {}
+
     public function createOrder(array $data, int $userId): Order
     {
         $startTime = microtime(true);
@@ -21,6 +30,8 @@ class OrderService
                 'user_id' => $userId,
                 'order_number' => $this->generateOrderNumber(),
                 'total_amount' => 0,
+                'received_amount' => $data['received_amount'] ?? null,
+                'change' => $data['change'] ?? null,
                 'status' => 'pending',
                 'payment_status' => 'pending',
                 'metodo_pago_id' => $data['metodo_pago_id'] ?? null,
@@ -44,15 +55,30 @@ class OrderService
 
             $endTime = microtime(true);
             $duration = $endTime - $startTime;
-            \Illuminate\Support\Facades\Log::info("Order creation time: " . round($duration, 3) . "s");
+            Log::info('Order creation time: '.round($duration, 3).'s');
             if ($duration > 1) {
-                \Illuminate\Support\Facades\Log::warning("⚠️ Order creation exceeded 1s limit!");
+                Log::warning('Order creation exceeded 1s limit!');
             } else {
-                \Illuminate\Support\Facades\Log::info("✅ Order creation within 1s limit");
+                Log::info('Order creation within 1s limit');
             }
 
             return $order;
         });
+    }
+
+    public function canBeModified(Order $order): bool
+    {
+        return ! in_array($order->status, ['completed', 'cancelled']);
+    }
+
+    public function canBeCancelled(Order $order): bool
+    {
+        return ! in_array($order->status, ['completed', 'cancelled']);
+    }
+
+    public function canBePaid(Order $order): bool
+    {
+        return ! in_array($order->status, ['cancelled', 'completed']) && $order->payment_status !== 'paid';
     }
 
     public function updateOrderStatus(Order $order, string $newStatus, ?string $reason = null): bool
@@ -61,18 +87,18 @@ class OrderService
             return $this->cancelOrder($order, $reason);
         }
 
-        if (!$order->canBeModified()) {
+        if (! $this->canBeModified($order)) {
             throw new Exception('No se puede modificar un pedido completado o cancelado');
         }
 
         $allowedTransitions = [
-            'pending'  => ['cooking'],
-            'cooking'  => ['ready'],
-            'ready'    => ['completed'],
+            'pending' => ['cooking'],
+            'cooking' => ['ready'],
+            'ready' => ['completed'],
         ];
 
         $currentStatus = $order->status;
-        if (!isset($allowedTransitions[$currentStatus]) || !in_array($newStatus, $allowedTransitions[$currentStatus])) {
+        if (! isset($allowedTransitions[$currentStatus]) || ! in_array($newStatus, $allowedTransitions[$currentStatus])) {
             throw new Exception("Transición de estado no válida: {$currentStatus} -> {$newStatus}");
         }
 
@@ -89,7 +115,7 @@ class OrderService
 
     public function cancelOrder(Order $order, ?string $reason = null): bool
     {
-        if (!$reason || strlen(trim($reason)) < 3) {
+        if (! $reason || strlen(trim($reason)) < 3) {
             throw new Exception('La cancelación requiere un motivo obligatorio (mínimo 3 caracteres)');
         }
 
@@ -97,35 +123,25 @@ class OrderService
             $wasPaid = $order->payment_status === 'paid';
             $amountToRefund = $order->total_amount;
 
-            $success = $order->cancel($reason);
+            $success = $this->applyCancellation($order, $reason);
 
             if ($success) {
-                // Devolver stock
-                foreach ($order->items as $item) {
-                    if ($item->variant) {
-                        $item->variant->increment('stock', $item->quantity);
-                    }
-                }
+                $this->stockService->restoreOrderItemsStock($order->items);
 
-                // Descontar puntos si fue pagado
                 if ($wasPaid && $order->client_id) {
-                    $pointsToDeduct = floor($order->total_amount / 10);
-                    if ($pointsToDeduct > 0) {
-                        $order->client->decrement('points', $pointsToDeduct);
-                    }
+                    $this->loyaltyService->deductPoints($order);
                 }
 
-                // Si estaba pagado en efectivo, registrar el egreso en la caja que procesó el pago
                 if ($wasPaid && $order->payment_method === 'cash') {
                     $registerId = $order->cash_register_id
-                        ?? \App\Models\CashRegister::where('status', 'open')->first()?->id;
+                        ?? CashRegister::where('status', 'open')->first()?->id;
                     if ($registerId) {
-                        \App\Models\CashMovement::create([
+                        CashMovement::create([
                             'cash_register_id' => $registerId,
                             'user_id' => auth()->id() ?? $order->user_id,
                             'type' => 'out',
                             'amount' => $amountToRefund,
-                            'description' => "Devolución por anulación de pedido #{$order->order_number}. Motivo: {$reason}"
+                            'description' => "Devolución por anulación de pedido #{$order->order_number}. Motivo: {$reason}",
                         ]);
                     }
                 }
@@ -133,10 +149,9 @@ class OrderService
                 $this->logOrderAction($order, 'order_cancelled', [
                     'reason' => $reason,
                     'refunded' => $wasPaid,
-                    'amount' => $wasPaid ? $amountToRefund : 0
+                    'amount' => $wasPaid ? $amountToRefund : 0,
                 ]);
 
-                // Monitoreo de Seguridad: Alerta si hay muchas anulaciones
                 $userId = auth()->id() ?? $order->user_id;
                 $cancellationCount = AuditLog::where('user_id', $userId)
                     ->where('action', 'order_cancelled')
@@ -144,8 +159,8 @@ class OrderService
                     ->count();
 
                 if ($cancellationCount >= 3) {
-                    $user = \App\Models\User::find($userId);
-                    \App\Events\SecurityAlert::dispatch(
+                    $user = User::find($userId);
+                    SecurityAlert::dispatch(
                         $user,
                         'high_cancellations',
                         "El usuario {$user->name} ha realizado {$cancellationCount} anulaciones en la última hora.",
@@ -160,34 +175,50 @@ class OrderService
 
     public function markOrderPaid(Order $order, string $paymentMethod): Order
     {
-        if (!$order->canBePaid()) {
+        if (! $this->canBePaid($order)) {
             throw new Exception('Este pedido no puede ser marcado como pagado');
         }
 
-        $order->markAsPaid($paymentMethod);
+        $this->applyPayment($order, $paymentMethod);
 
-        // Vincular con la caja abierta si es pago en efectivo
         if ($paymentMethod === 'cash') {
-            $activeRegister = \App\Models\CashRegister::where('status', 'open')->first();
-            if ($activeRegister && !$order->cash_register_id) {
+            $activeRegister = CashRegister::where('status', 'open')->first();
+            if ($activeRegister && ! $order->cash_register_id) {
                 $order->update(['cash_register_id' => $activeRegister->id]);
             }
         }
 
-        // Sistema de puntos: 1 punto por cada 10 Bs.
-        if ($order->client_id) {
-            $points = floor($order->total_amount / 10);
-            if ($points > 0) {
-                $order->client->increment('points', $points);
-            }
-        }
+        $pointsEarned = $this->loyaltyService->awardPoints($order);
 
         $this->logOrderAction($order, 'order_paid', [
             'payment_method' => $paymentMethod,
-            'points_earned' => $order->client_id ? floor($order->total_amount / 10) : 0
+            'points_earned' => $pointsEarned,
         ]);
 
         return $order;
+    }
+
+    protected function applyCancellation(Order $order, string $reason): bool
+    {
+        if (! $this->canBeCancelled($order)) {
+            return false;
+        }
+
+        $order->update([
+            'status' => 'cancelled',
+            'cancellation_reason' => $reason,
+            'payment_status' => $order->payment_status === 'paid' ? 'refunded' : 'pending',
+        ]);
+
+        return true;
+    }
+
+    protected function applyPayment(Order $order, string $paymentMethod): void
+    {
+        $order->update([
+            'payment_status' => 'paid',
+            'payment_method' => $paymentMethod,
+        ]);
     }
 
     protected function validateOrderData(array $data): void
@@ -197,7 +228,7 @@ class OrderService
         }
 
         foreach ($data['items'] as $item) {
-            if (!isset($item['product_id']) || !isset($item['variant_id'])) {
+            if (! isset($item['product_id']) || ! isset($item['variant_id'])) {
                 throw new Exception('Cada item debe tener product_id y variant_id');
             }
             if ($item['quantity'] <= 0) {
@@ -208,28 +239,12 @@ class OrderService
 
     protected function createOrderItem(Order $order, array $item): float
     {
-        // Usamos lockForUpdate para prevenir condiciones de carrera en el stock
-        $variant = ProductVariant::where('id', $item['variant_id'])->lockForUpdate()->first();
-
-        if (!$variant) {
-            throw new Exception("Variante no encontrada: {$item['variant_id']}");
-        }
-
-        // Validar que el product_id corresponde a la variante
-        if ($variant->product_id !== (int) $item['product_id']) {
-            throw new Exception("La variante no pertenece al producto indicado");
-        }
-
-        // Validar que el precio enviado coincide con el precio real (evita manipulación)
-        $submittedPrice = (float) $item['price'];
-        $actualPrice = (float) $variant->price;
-        if (abs($submittedPrice - $actualPrice) > 0.0001) {
-            throw new Exception("Precio inválido para {$variant->name}");
-        }
-
-        if ($variant->stock !== null && $variant->stock < $item['quantity']) {
-            throw new Exception("Stock insuficiente para {$variant->name} (Disponible: {$variant->stock})");
-        }
+        $variant = $this->stockService->lockAndValidateVariant(
+            $item['variant_id'],
+            $item['product_id'],
+            $item['price'],
+            $item['quantity']
+        );
 
         OrderItem::create([
             'order_id' => $order->id,
@@ -240,16 +255,14 @@ class OrderService
             'subtotal' => $variant->price * $item['quantity'],
         ]);
 
-        if ($variant->stock !== null) {
-            $variant->decrement('stock', $item['quantity']);
-        }
+        $this->stockService->decrementStock($variant, $item['quantity']);
 
         return $variant->price * $item['quantity'];
     }
 
     protected function generateOrderNumber(): string
     {
-        return 'ORD-' . now()->format('ymd') . '-' . strtoupper(substr(uniqid('', true), -8));
+        return 'ORD-'.now()->format('ymd').'-'.strtoupper(substr(uniqid('', true), -8));
     }
 
     protected function logOrderAction(Order $order, string $action, array $details = []): void

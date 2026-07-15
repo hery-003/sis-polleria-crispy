@@ -8,8 +8,107 @@
     --color-background: #FFF4D1;
     --color-text: #4B230D;
     --color-success: #16a34a;
+    --color-dark-bg: #1a1a2e;
+    --color-dark-card: #16213e;
+    --color-dark-text: #e0e0e0;
+    --color-dark-border: #2a2a4a;
     --font-family-sans: 'Poppins', sans-serif;
     --font-family-poppins: 'Poppins', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-primary: #ff8533;
+        --color-secondary: #ffd033;
+        --color-danger: #ff4d4d;
+    }
+}
+
+.dark {
+    --color-background: #1a1a2e;
+    --color-text: #e0e0e0;
+}
+
+.dark .bg-white {
+    background-color: #16213e;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #F3702133;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #F37021;
+}
+
+/* Selection */
+::selection {
+    background: #F37021;
+    color: white;
+}
+
+/* Premium Shadows */
+.shadow-premium {
+    shadow: 0 20px 25px -5px rgba(243, 112, 33, 0.1), 0 8px 10px -6px rgba(243, 112, 33, 0.1);
+}
+
+.shadow-premium-hover:hover {
+    shadow: 0 25px 30px -5px rgba(243, 112, 33, 0.15), 0 10px 12px -6px rgba(243, 112, 33, 0.15);
+}
+
+/* Glassmorphism */
+.glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.dark .glass {
+    background: rgba(22, 33, 62, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.dark .text-gray-500,
+.dark .text-gray-600,
+.dark .text-gray-700 {
+    color: #a0a0b0;
+}
+
+.dark .text-gray-800,
+.dark .text-gray-900 {
+    color: #e0e0e0;
+}
+
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300 {
+    border-color: #2a2a4a;
+}
+
+.dark .bg-gray-50,
+.dark .bg-gray-100 {
+    background-color: #1e2a45;
+}
+
+.dark input,
+.dark select,
+.dark textarea {
+    background-color: #1e2a45;
+    border-color: #2a2a4a;
+    color: #e0e0e0;
+}
+
+.dark .hover\:bg-gray-50:hover {
+    background-color: #1e2a45;
 }
 
 @keyframes slide-in-right {
@@ -126,3 +225,20 @@
 .font-poppins {
     font-family: 'Poppins', sans-serif;
 }
+
+/* Page transitions */
+.page-enter-active {
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+.page-leave-active {
+    transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.page-enter-from {
+    opacity: 0;
+    transform: translateY(8px);
+}
+.page-leave-to {
+    opacity: 0;
+    transform: translateY(-4px);
+}
+

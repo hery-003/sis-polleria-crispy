@@ -1,7 +1,7 @@
 <?php
 
-use App\Models\User;
 use App\Models\Order;
+use App\Models\User;
 use App\Services\ReportService;
 use Carbon\Carbon;
 

@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\OrderItem;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class ReportService
 {
@@ -14,7 +14,7 @@ class ReportService
     {
         $cacheKey = "reports_stats_{$startDate->format('Y-m-d')}_{$endDate->format('Y-m-d')}";
 
-        return Cache::remember($cacheKey, now()->addMinutes(10), function () use ($startDate, $endDate) {
+        return Cache::flexible($cacheKey, config('cache_ttl.reports_stats'), function () use ($startDate, $endDate) {
             return [
                 'totalSales' => $this->getTotalSales($startDate, $endDate),
                 'ordersCount' => $this->getOrdersCount($startDate, $endDate),
@@ -35,7 +35,7 @@ class ReportService
     {
         $cacheKey = "daily_summary_{$date->format('Y-m-d')}";
 
-        return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($date) {
+        return Cache::flexible($cacheKey, config('cache_ttl.daily_summary'), function () use ($date) {
             $start = $date->copy()->startOfDay();
             $end = $date->copy()->endOfDay();
 
@@ -86,7 +86,7 @@ class ReportService
     protected function getNetIncome(Carbon $start, Carbon $end): float
     {
         $totalSales = $this->getTotalSales($start, $end);
-        
+
         $refundedAmount = (float) Order::where('payment_status', 'refunded')
             ->whereBetween('created_at', [$start, $end])
             ->sum('total_amount');
@@ -107,12 +107,12 @@ class ReportService
         return $this->getTotalSales($start, $end) / $paidOrders;
     }
 
-    protected function getTopProducts(Carbon $start, Carbon $end, int $limit = 5)
+    public function getTopProducts(Carbon $start, Carbon $end, int $limit = 5)
     {
         return OrderItem::select('product_id', DB::raw('SUM(quantity) as total_qty'))
             ->whereHas('order', function ($q) use ($start, $end) {
                 $q->where('payment_status', 'paid')
-                  ->whereBetween('created_at', [$start, $end]);
+                    ->whereBetween('created_at', [$start, $end]);
             })
             ->groupBy('product_id')
             ->with('product')
@@ -130,7 +130,7 @@ class ReportService
             ->get();
     }
 
-    protected function getSalesByDay(Carbon $start, Carbon $end)
+    public function getSalesByDay(Carbon $start, Carbon $end)
     {
         return Order::where('payment_status', 'paid')
             ->whereBetween('created_at', [$start, $end])
@@ -145,8 +145,8 @@ class ReportService
         $driver = DB::connection()->getDriverName();
         $hourExpr = match ($driver) {
             'sqlite' => "CAST(strftime('%H', created_at) AS INTEGER)",
-            'pgsql'  => "EXTRACT(HOUR FROM created_at)::int",
-            default  => "HOUR(created_at)",
+            'pgsql' => 'EXTRACT(HOUR FROM created_at)::int',
+            default => 'HOUR(created_at)',
         };
 
         return Order::where('payment_status', 'paid')
@@ -166,6 +166,17 @@ class ReportService
             ->get();
     }
 
+    public function getSalesByUser(Carbon $start, Carbon $end)
+    {
+        return Order::where('payment_status', 'paid')
+            ->whereBetween('created_at', [$start, $end])
+            ->select('user_id', DB::raw('SUM(total_amount) as total'), DB::raw('COUNT(*) as count'))
+            ->groupBy('user_id')
+            ->with('user')
+            ->orderBy('total', 'desc')
+            ->get();
+    }
+
     protected function getSalesByCategory(Carbon $start, Carbon $end)
     {
         return DB::table('order_items')
@@ -178,5 +189,13 @@ class ReportService
             ->groupBy('categories.id', 'categories.name')
             ->orderBy('total', 'desc')
             ->get();
+    }
+
+    public function getComparison(Carbon $start1, Carbon $end1, Carbon $start2, Carbon $end2): array
+    {
+        return [
+            'current' => $this->getStats($start1, $end1),
+            'previous' => $this->getStats($start2, $end2),
+        ];
     }
 }

@@ -1,23 +1,25 @@
 <?php
 
-use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\POSController;
-use Inertia\Inertia;
-use App\Http\Controllers\KitchenController;
+use App\Http\Controllers\AuditLogController;
+use App\Http\Controllers\CancellationController;
 use App\Http\Controllers\CashRegisterController;
-use App\Http\Controllers\ReportController;
-use App\Http\Controllers\OrderController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ClientController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\KitchenController;
 use App\Http\Controllers\MesaController;
 use App\Http\Controllers\MetodoPagoController;
-use App\Http\Controllers\AuditLogController;
-use App\Http\Controllers\ClientController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\POSController;
 use App\Http\Controllers\PrintController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\UserController;
 use App\Http\Controllers\WaiterController;
-use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
 
 Route::get('/', function () {
     return redirect()->route('login');
@@ -54,6 +56,7 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/cash-register/close', [CashRegisterController::class, 'close'])->name('cash-register.close');
         Route::post('/cash-register/movement', [CashRegisterController::class, 'storeMovement'])->name('cash-register.movement');
         Route::get('/cash-register/{register}/summary', [CashRegisterController::class, 'getSummary'])->name('cash-register.summary');
+        Route::get('/cash-register/{register}/pdf', [CashRegisterController::class, 'exportPdf'])->name('cash-register.pdf');
     });
 
     // Reportes - Admin
@@ -61,13 +64,16 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
         Route::get('/reports/export-pdf', [ReportController::class, 'exportPdf'])->name('reports.export.pdf');
         Route::get('/reports/export-csv', [ReportController::class, 'exportCsv'])->name('reports.export.csv');
+        Route::get('/reports/export-excel', [ReportController::class, 'exportExcel'])->name('reports.export.excel');
     });
 
     // Imprimir pedido - Admin, Cajeros y Meseros
     Route::middleware(['role:admin,cashier,waiter', 'throttle:30,1'])->group(function () {
         Route::get('/orders/{order}/print', [OrderController::class, 'print'])->name('orders.print');
         Route::get('/orders/{order}/receipt', [PrintController::class, 'receipt'])->name('orders.receipt');
+        Route::get('/orders/{order}/reprint', [PrintController::class, 'reprint'])->name('orders.reprint');
         Route::get('/orders/{order}/kitchen', [PrintController::class, 'kitchen'])->name('orders.kitchen');
+        Route::get('/orders/{order}/pdf', [PrintController::class, 'pdf'])->name('orders.pdf');
         Route::post('/orders/{order}/auto-print', [PrintController::class, 'autoPrint'])->name('orders.auto-print');
     });
 
@@ -77,6 +83,8 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/users', [UserController::class, 'store'])->name('users.store');
         Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
         Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+        Route::patch('/users/{user}/restore', [UserController::class, 'restore'])->name('users.restore');
+        Route::patch('/users/{user}/toggle-active', [UserController::class, 'toggleActive'])->name('users.toggle-active');
     });
 
     // Productos - Admin y Cajeros
@@ -102,9 +110,29 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/metodos-pago/{metodoPago}', [MetodoPagoController::class, 'destroy'])->name('metodos-pago.destroy');
     });
 
+    // Categorías - Admin y Cajeros
+    Route::middleware(['role:admin,cashier'])->group(function () {
+        Route::get('/categories', [CategoryController::class, 'index'])->name('categories.index');
+        Route::post('/categories', [CategoryController::class, 'store'])->name('categories.store');
+        Route::put('/categories/{category}', [CategoryController::class, 'update'])->name('categories.update');
+        Route::delete('/categories/{category}', [CategoryController::class, 'destroy'])->name('categories.destroy');
+        Route::patch('/categories/{id}/restore', [CategoryController::class, 'restore'])->name('categories.restore');
+    });
+
     // Auditoria - Solo Admin
     Route::middleware(['role:admin'])->group(function () {
         Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
+    });
+
+    // Cancelaciones - Solo Admin
+    Route::middleware(['role:admin'])->group(function () {
+        Route::get('/cancellations', [CancellationController::class, 'index'])->name('cancellations.index');
+    });
+
+    // Configuración - Solo Admin
+    Route::middleware(['role:admin'])->group(function () {
+        Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+        Route::put('/settings', [SettingsController::class, 'update'])->name('settings.update');
     });
 
     // Clientes - Admin y Cajeros
@@ -128,5 +156,5 @@ require __DIR__.'/auth.php';
 
 // Página 404 personalizada
 Route::fallback(function () {
-    return Inertia::render('Error404');
+    return Inertia::render('Error404')->toResponse(request())->setStatusCode(404);
 });

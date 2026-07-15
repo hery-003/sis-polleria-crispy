@@ -1,9 +1,9 @@
 <?php
 
-use App\Models\User;
-use App\Models\CashRegister;
 use App\Models\CashMovement;
+use App\Models\CashRegister;
 use App\Models\Order;
+use App\Models\User;
 use App\Services\CashRegisterService;
 
 beforeEach(function () {
@@ -25,7 +25,7 @@ it('opens a cash register', function () {
 it('prevents opening a second register while one is open', function () {
     $this->service->openRegister(['opening_balance' => 100], $this->user->id);
 
-    expect(fn() => $this->service->openRegister(['opening_balance' => 200], $this->user->id))
+    expect(fn () => $this->service->openRegister(['opening_balance' => 200], $this->user->id))
         ->toThrow(Exception::class, 'Ya existe una caja abierta');
 });
 
@@ -67,13 +67,13 @@ it('creates cash movements', function () {
 
     expect($movement)->toBeInstanceOf(CashMovement::class)
         ->and($movement->type)->toBe('in')
-        ->and($movement->amount)->toBe(50.00);
+        ->and((float) $movement->amount)->toBe(50.0);
 });
 
 it('prevents movements on closed register', function () {
     $register = CashRegister::factory()->closed()->create();
 
-    expect(fn() => $this->service->createMovement($register->id, [
+    expect(fn () => $this->service->createMovement($register->id, [
         'type' => 'in',
         'amount' => 50,
         'description' => 'Test',

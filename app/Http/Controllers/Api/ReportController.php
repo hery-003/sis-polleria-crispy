@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use Illuminate\Routing\Attributes\Middleware;
 use App\Http\Controllers\Controller;
 use App\Services\ReportService;
 use Carbon\Carbon;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\Validator;
 
 class ReportController extends Controller
 {
+    #[Middleware(['auth:sanctum', 'role:admin'])]
     protected ReportService $reportService;
 
     public function __construct(ReportService $reportService)

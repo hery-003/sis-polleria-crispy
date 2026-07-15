@@ -1,16 +1,19 @@
 <?php
 
+use App\Models\User;
+use Illuminate\Contracts\Console\Kernel;
+
 if (php_sapi_name() !== 'cli') {
-    die('Este script solo puede ejecutarse desde la linea de comandos.');
+    exit('Este script solo puede ejecutarse desde la linea de comandos.');
 }
 
 require __DIR__.'/vendor/autoload.php';
 $app = require __DIR__.'/bootstrap/app.php';
-$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+$app->make(Kernel::class)->bootstrap();
 
-$user = \App\Models\User::where('role', 'admin')->first();
+$user = User::where('role', 'admin')->first();
 
-if (!$user) {
+if (! $user) {
     echo "No se encontro un usuario administrador.\n";
     exit(1);
 }

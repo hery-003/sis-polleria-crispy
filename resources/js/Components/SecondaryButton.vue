@@ -8,9 +8,9 @@ const props = defineProps({
   disabled: { type: Boolean, default: false }
 })
 
-const baseClass = 'inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
+const baseClass = 'inline-flex items-center justify-center rounded-2xl px-6 py-3.5 text-sm font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
 
-const variantClass = 'bg-white border-2 border-gray-200 text-gray-700 hover:border-primary hover:text-primary shadow-sm hover:shadow-md hover:-translate-y-0.5'
+const variantClass = 'bg-white border-2 border-gray-100 text-text hover:border-secondary hover:text-secondary shadow-sm hover:shadow-xl hover:shadow-yellow-500/10 hover:-translate-y-1'
 
 const classes = computed(() => `${baseClass} ${variantClass}`)
 </script>
